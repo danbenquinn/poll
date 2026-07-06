@@ -127,7 +127,11 @@
   $("changeid2").addEventListener("click", changeId);
 
   let polling = false;
-  function beginPolling(){ if(polling) { reconcile(); return; } polling = true; poll(); setInterval(poll, 2500); }
+  function beginPolling(){
+    reconcile();                       // show a screen IMMEDIATELY (no blank gap while the first poll loads)
+    if(polling) return;
+    polling = true; poll(); setInterval(poll, 2500);
+  }
 
   async function poll(){
     try{
