@@ -145,6 +145,7 @@
 
   function reconcile(){
     if(!getId()) return;                       // still on id screen
+    if(!$("idscreen").classList.contains("hidden")) return;   // user is changing their ID — don't yank it away
     const key = (state.poll || "-") + "|" + state.open;
     if(key === shownKey) return;               // nothing changed
     shownKey = key;
