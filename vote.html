@@ -73,7 +73,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
-  console.log("vote.html build v5 — follow-along + change-fix + immediate-render");
+  console.log("vote.html build v6 — startup-order fix (no more TDZ freeze)");
   // ---- Supabase project (same values as in the deck) ----
   const SUPABASE_URL = "https://rdbacwwbeyeqdkswwvjt.supabase.co";
   const SUPABASE_ANON_KEY = "sb_publishable_IQNxMMynit0aWtOS3tjiRQ_h5sNo159";
@@ -104,11 +104,6 @@
   function message(t,b){ $("msgtitle").textContent=t; $("msgbody").textContent=b; show("msg"); }
   function getId(){ return (localStorage.getItem("uva_computing_id")||"").trim(); }
   function setWho(){ $("whoami").textContent=getId(); $("whoami2").textContent=getId(); }
-
-  if(!CLASS){ message("Missing class", "This link is incomplete. Scan the code shown on the current slide."); }
-  else if(!configured){ message("Not configured", "The voting backend isn't set up yet."); }
-  else if(!window.supabase){ message("Couldn't load", "A network hiccup stopped the voter from loading. Check your connection and reload this page."); }
-  else { supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); start(); }
 
   function start(){
     setWho();
@@ -188,6 +183,12 @@
       console.warn(e);
     }
   }
+
+  // ---- Kick things off LAST, so every function + variable above is already initialized ----
+  if(!CLASS){ message("Missing class", "This link is incomplete. Scan the code shown on the current slide."); }
+  else if(!configured){ message("Not configured", "The voting backend isn't set up yet."); }
+  else if(!window.supabase){ message("Couldn't load", "A network hiccup stopped the voter from loading. Check your connection and reload this page."); }
+  else { supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); start(); }
 </script>
 </body>
 </html>
