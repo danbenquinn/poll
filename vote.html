@@ -94,7 +94,7 @@
   const params = new URLSearchParams(location.search);
   const CLASS = params.get("class");
   const configured = !SUPABASE_URL.includes("YOUR-PROJECT");
-  const supa = configured ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+  let supa = null;   // created below, only once we know the library actually loaded
 
   let state = { poll: null, open: false };   // pushed from the deck via get_state
   let shownKey = null;                        // what's currently rendered (poll|open)
@@ -106,7 +106,8 @@
 
   if(!CLASS){ message("Missing class", "This link is incomplete. Scan the code shown on the current slide."); }
   else if(!configured){ message("Not configured", "The voting backend isn't set up yet."); }
-  else { start(); }
+  else if(!window.supabase){ message("Couldn't load", "A network hiccup stopped the voter from loading. Check your connection and reload this page."); }
+  else { supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); start(); }
 
   function start(){
     setWho();
