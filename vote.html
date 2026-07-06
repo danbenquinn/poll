@@ -20,6 +20,7 @@
                 background:#22252b; color:var(--muted); font-weight:650; }
   .choice.sel{ border-color:var(--accent); background:#12283a; }
   .choice.sel .key{ background:var(--accent); color:#04121d; }
+  .choice[disabled]{ opacity:.55; }
   .status{ margin-top:8px; font-size:.95rem; color:var(--ok); min-height:1.4em; }
   .idbar{ margin-top:auto; padding-top:22px; color:var(--muted); font-size:.85rem; }
   .idbar a{ color:var(--accent); text-decoration:none; }
@@ -30,6 +31,11 @@
                  background:var(--accent); color:#04121d; font-weight:700; font-size:1.05rem; }
   .hint{ color:var(--muted); font-size:.85rem; margin-top:.7em; line-height:1.4; }
   .err{ color:#ff9a9a; }
+  .waiting{ margin:auto 0; text-align:center; color:var(--muted); }
+  .waiting .dot{ display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--accent);
+                 margin:0 3px; animation:pulse 1.2s infinite ease-in-out; }
+  .waiting .dot:nth-child(2){ animation-delay:.2s } .waiting .dot:nth-child(3){ animation-delay:.4s }
+  @keyframes pulse{ 0%,100%{opacity:.25} 50%{opacity:1} }
   .hidden{ display:none; }
 </style>
 </head>
@@ -40,10 +46,9 @@
   <div id="idscreen" class="idscreen hidden">
     <h1>Before you vote</h1>
     <label for="cid">Your UVA Computing ID</label>
-    <input id="cid" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="e.g. abc1de" inputmode="text">
+    <input id="cid" name="computing-id" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="e.g. abc1de" inputmode="text">
     <button class="go" id="idgo">Continue</button>
-    <p class="hint">Used once to record participation and to keep one vote per person. Saved on this
-      phone so you won't be asked again. It is not a password.</p>
+    <p class="hint">Used once to distribute prizes. Saved on this phone so you won't be asked again. It is not a password.</p>
     <p id="iderr" class="hint err"></p>
   </div>
 
@@ -52,6 +57,15 @@
     <div id="choices"></div>
     <div id="status" class="status"></div>
     <div class="idbar">Voting as <b id="whoami"></b> · <a href="#" id="changeid">change</a></div>
+  </div>
+
+  <div id="waitscreen" class="hidden">
+    <div class="waiting">
+      <h1 id="waittitle">Waiting for the next question</h1>
+      <p class="hint" id="waitbody">Keep this page open — it follows along with class.</p>
+      <div><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+    </div>
+    <div class="idbar">Voting as <b id="whoami2"></b> · <a href="#" id="changeid2">change</a></div>
   </div>
 
   <div id="msg" class="hidden"><h1 id="msgtitle"></h1><p id="msgbody" class="hint"></p></div>
@@ -64,7 +78,7 @@
   const SUPABASE_ANON_KEY = "sb_publishable_IQNxMMynit0aWtOS3tjiRQ_h5sNo159";
   // --------------------------------------------------------
 
-  // Poll definitions. Choice order MUST match the deck (A=0, B=1, ...).
+  // Question bank, keyed by poll id. Choice order MUST match the deck (A=0, B=1, ...).
   const POLLS = {
     "classB-q1": {
       q: "A ball dropped from height h takes time τ to land. Now it's thrown upward at speed h/τ. Time to land, compared to τ?",
@@ -78,22 +92,26 @@
 
   const $ = id => document.getElementById(id);
   const params = new URLSearchParams(location.search);
-  const pollId = params.get("p");
-  const poll = POLLS[pollId];
+  const CLASS = params.get("class");
   const configured = !SUPABASE_URL.includes("YOUR-PROJECT");
   const supa = configured ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
-  function show(el){ ["idscreen","pollscreen","msg"].forEach(i=>$(i).classList.add("hidden")); $(el).classList.remove("hidden"); }
-  function message(t,b){ $("msgtitle").textContent=t; $("msgbody").textContent=b; show("msg"); }
+  let state = { poll: null, open: false };   // pushed from the deck via get_state
+  let shownKey = null;                        // what's currently rendered (poll|open)
 
-  if(!poll){ message("Poll not found", "This link doesn't point to a known question. Scan the code on the current slide."); }
+  function show(el){ ["idscreen","pollscreen","waitscreen","msg"].forEach(i=>$(i).classList.add("hidden")); $(el).classList.remove("hidden"); }
+  function message(t,b){ $("msgtitle").textContent=t; $("msgbody").textContent=b; show("msg"); }
+  function getId(){ return (localStorage.getItem("uva_computing_id")||"").trim(); }
+  function setWho(){ $("whoami").textContent=getId(); $("whoami2").textContent=getId(); }
+
+  if(!CLASS){ message("Missing class", "This link is incomplete. Scan the code shown on the current slide."); }
+  else if(!configured){ message("Not configured", "The voting backend isn't set up yet."); }
   else { start(); }
 
-  function getId(){ return (localStorage.getItem("uva_computing_id")||"").trim(); }
-
   function start(){
-    if(!getId()){ show("idscreen"); $("cid").focus(); }
-    else { renderPoll(); }
+    setWho();
+    if(!getId()){ show("idscreen"); $("cid").focus(); return; }
+    beginPolling();
   }
 
   $("idgo").addEventListener("click", () => {
@@ -101,39 +119,62 @@
     if(!/^[a-z]{2,4}[0-9]{0,4}[a-z]?$/i.test(v) || v.length < 3){
       $("iderr").textContent = "Please enter a valid UVA Computing ID (e.g. abc1de)."; return;
     }
-    localStorage.setItem("uva_computing_id", v);
-    renderPoll();
+    localStorage.setItem("uva_computing_id", v); setWho(); beginPolling();
   });
+  function changeId(e){ e.preventDefault(); shownKey=null; show("idscreen"); $("cid").value=getId(); $("cid").focus(); }
+  $("changeid").addEventListener("click", changeId);
+  $("changeid2").addEventListener("click", changeId);
 
-  $("changeid").addEventListener("click", (e)=>{ e.preventDefault(); show("idscreen"); $("cid").value=getId(); $("cid").focus(); });
+  let polling = false;
+  function beginPolling(){ if(polling) { reconcile(); return; } polling = true; poll(); setInterval(poll, 2500); }
 
-  function renderPoll(){
+  async function poll(){
+    try{
+      const { data, error } = await supa.rpc("get_state", { p_class: CLASS });
+      if(error) throw error;
+      const row = (data && data[0]) || null;
+      state = row ? { poll: row.current_poll, open: !!row.is_open } : { poll: null, open: false };
+    }catch(e){ console.warn(e); }
+    reconcile();
+  }
+
+  function reconcile(){
+    if(!getId()) return;                       // still on id screen
+    const key = (state.poll || "-") + "|" + state.open;
+    if(key === shownKey) return;               // nothing changed
+    shownKey = key;
+    if(state.poll && POLLS[state.poll]) renderQuestion(state.poll, state.open);
+    else showWait("Waiting for the next question", "Keep this page open — it follows along with class.");
+  }
+
+  function showWait(t,b){ $("waittitle").textContent=t; $("waitbody").textContent=b; show("waitscreen"); }
+
+  function renderQuestion(pid, open){
     show("pollscreen");
+    const poll = POLLS[pid];
     $("qtitle").textContent = poll.q;
-    $("whoami").textContent = getId();
-    const prev = localStorage.getItem("voted_"+pollId);
+    const prev = localStorage.getItem("voted_"+pid);
     const box = $("choices"); box.innerHTML = "";
     poll.choices.forEach((txt,i) => {
       const b = document.createElement("button");
       b.className = "choice" + (String(i)===prev ? " sel" : "");
+      if(!open) b.setAttribute("disabled","");
       b.innerHTML = `<span class="key">${"ABCD"[i]}</span><span>${txt}</span>`;
-      b.addEventListener("click", () => submit(i));
+      b.addEventListener("click", () => submit(pid, i));
       box.appendChild(b);
     });
-    $("status").textContent = prev!==null ? "Recorded. Tap another to change it (until voting closes)." : "";
+    $("status").textContent = !open ? "Voting closed for this question." :
+                              (prev!==null ? "Recorded. Tap another to change it (until voting closes)." : "");
   }
 
-  async function submit(i){
+  async function submit(pid, i){
+    if(!state.open || state.poll !== pid) return;
     [...document.querySelectorAll(".choice")].forEach((c,j)=>c.classList.toggle("sel", j===i));
     $("status").textContent = "Sending…";
-    if(!configured){
-      localStorage.setItem("voted_"+pollId, i);
-      $("status").textContent = "Recorded (demo mode — no backend configured yet)."; return;
-    }
     try{
-      const { error } = await supa.rpc("cast_vote", { p_poll: pollId, p_id: getId(), p_choice: i });
+      const { error } = await supa.rpc("cast_vote", { p_poll: pid, p_id: getId(), p_choice: i });
       if(error) throw error;
-      localStorage.setItem("voted_"+pollId, i);
+      localStorage.setItem("voted_"+pid, i);
       $("status").textContent = "Vote recorded ✓  You can change it until voting closes.";
     }catch(e){
       $("status").innerHTML = '<span class="err">Could not send — check your connection and tap again.</span>';
