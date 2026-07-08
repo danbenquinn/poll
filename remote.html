@@ -13,6 +13,8 @@
   Channel = "deck-<class>", where <class> comes from ?class=classD (matches the deck's CLASS_ID).
 -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>window.MathJax = { tex:{ inlineMath:[['$','$']], displayMath:[['$$','$$']] }, svg:{ fontCache:'none' }, options:{ enableAssistiveMml:false } };</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
 <style>
   :root{ --ink:#f2f2ef; --muted:#9aa0a6; --bg:#0b0c0e; --panel:#15171b; --line:#24272d;
          --accent:#5D9EC7; --ok:#8FB032; --amber:#E19C24; }
@@ -102,20 +104,30 @@
     const prev = $('npreview');
     if(p.nextId){ prev.innerHTML = p.nextNotes ? p.nextNotes : '<span class="none">(no notes)</span>'; }
     else { prev.innerHTML = '<span class="none">End of deck</span>'; }
-    prev.classList.toggle('faded', !!p.nextNotes && prev.scrollHeight > prev.clientHeight);
+    if(window.MathJax && MathJax.typesetPromise){ MathJax.typesetPromise([$('notes'), $('npreview')])
+      .then(() => prev.classList.toggle('faded', prev.scrollHeight > prev.clientHeight)).catch(()=>{}); }
+    else { prev.classList.toggle('faded', prev.scrollHeight > prev.clientHeight); }
     $('main').scrollTop = 0;
   }
+
+  // Only re-render when the slide actually changed, so MathJax isn't re-typesetting on every 2s safety poll.
+  let lastKey = null;
+  function onState(p){ const key = (p.index||'') + '|' + (p.id||'') + '|' + (p.nextId||''); if(key === lastKey) return; lastKey = key; render(p); }
 
   let client, chan;
   try{
     client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { realtime:{ params:{ eventsPerSecond: 5 } } });
     chan = client.channel(CHAN, { config:{ broadcast:{ self:false } } });
-    chan.on('broadcast', { event:'state' }, ({ payload }) => { setLive(true, 'live'); render(payload); });
+    chan.on('broadcast', { event:'state' }, ({ payload }) => { setLive(true, 'live'); onState(payload); });
     chan.subscribe((status) => {
       if(status === 'SUBSCRIBED'){ setLive(false, 'waiting for laptop…'); chan.send({ type:'broadcast', event:'request', payload:{} }); }
       else if(status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED'){ setLive(false, 'reconnecting…'); }
     });
   }catch(e){ setLive(false, 'no connection'); }
+
+  // Safety net: re-ask the laptop for current state every 2s (only while visible). If a broadcast was ever
+  // dropped, the phone self-heals within ~2s instead of sitting stale. onState() dedups so this is cheap.
+  setInterval(() => { if(!document.hidden){ try{ chan && chan.send({ type:'broadcast', event:'request', payload:{} }); }catch(e){} } }, 2000);
 
   function nav(action){ try{ chan && chan.send({ type:'broadcast', event:'nav', payload:{ action } }); }catch(e){} }
   $('next').addEventListener('click', () => nav('next'));
