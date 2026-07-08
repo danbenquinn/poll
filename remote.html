@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Presenter Remote</title>
+<!--
+  Phone-side presenter remote for the MAE 1425 reveal decks. Opened on Daniel's phone; syncs with the
+  laptop deck over the SAME Supabase project the polls use, via a realtime BROADCAST channel (one socket).
+  Shows the current slide's speaker notes + a "next" card, and its Prev/Next buttons drive the laptop.
+  Purely additive: if this page (or wifi) dies, the laptop deck + its S speaker view are unaffected.
+  Channel = "deck-<class>", where <class> comes from ?class=classD (matches the deck's CLASS_ID).
+-->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{ --ink:#f2f2ef; --muted:#9aa0a6; --bg:#0b0c0e; --panel:#15171b; --line:#24272d;
+         --accent:#5D9EC7; --ok:#8FB032; --amber:#E19C24; }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; height:100%; }
+  body{ background:var(--bg); color:var(--ink); display:flex; flex-direction:column; height:100dvh;
+        font-family:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif; }
+  header{ display:flex; align-items:center; gap:.55em; padding:.6em .85em; border-bottom:1px solid var(--line); font-size:.9rem; }
+  .lamp{ width:.7em; height:.7em; border-radius:50%; background:var(--amber); flex:none; transition:background .3s; }
+  .lamp.on{ background:var(--ok); box-shadow:0 0 8px var(--ok); }
+  .status{ color:var(--muted); }
+  .spacer{ flex:1; }
+  .idx{ color:var(--muted); font-variant-numeric:tabular-nums; font-size:.85rem; }
+  main{ flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:1em 1.1em 1.2em; }
+  .waiting{ color:var(--muted); text-align:center; margin-top:32%; font-size:1.15rem; line-height:1.6; }
+  .waiting small{ color:#6b7075; font-size:.8rem; }
+  .cur-notes{ font-size:1.28rem; line-height:1.55; }
+  .cur-notes b{ color:#fff; }
+  .cur-notes svg{ max-width:100%; height:auto; }
+  .cur-empty{ color:var(--muted); font-style:italic; }
+  /* Next-slide card */
+  .next{ margin-top:1.5em; border:1px solid var(--line); border-radius:14px; overflow:hidden; background:var(--panel); }
+  .next .bar{ display:flex; align-items:center; gap:.5em; padding:.55em .75em; border-bottom:1px solid var(--line); }
+  .next .badge{ font-size:.62rem; letter-spacing:.1em; text-transform:uppercase; font-weight:700;
+                padding:.25em .6em; border-radius:999px; color:#04121d; background:var(--accent); }
+  .next .badge.video{ background:var(--accent); } .next .badge.image{ background:#7FbFd9; }
+  .next .badge.board{ background:var(--amber); } .next .badge.poll{ background:var(--ok); }
+  .next .badge.sim{ background:#8778B3; color:#fff; } .next .badge.wheel{ background:#E19C24; }
+  .next .badge.camera{ background:#C56E1A; color:#fff; } .next .badge.intro,.next .badge.title,.next .badge.slide{ background:#5E81B5; color:#fff; }
+  .next .nid{ font-weight:650; color:var(--ink); font-size:.95rem; }
+  .next .lbl{ color:var(--muted); font-size:.6rem; letter-spacing:.14em; text-transform:uppercase; margin-left:auto; }
+  .next .npreview{ padding:.75em .85em; color:#c7ccd2; font-size:.98rem; line-height:1.45;
+                   max-height:9.5em; overflow:hidden; position:relative; }
+  .next .npreview svg{ max-width:100%; height:auto; }
+  .next .npreview.faded::after{ content:""; position:absolute; left:0; right:0; bottom:0; height:2.4em;
+                   background:linear-gradient(transparent, var(--panel)); }
+  .next .npreview .none{ color:var(--muted); font-style:italic; }
+  footer{ display:flex; gap:.7em; padding:.75em; padding-bottom:calc(.75em + env(safe-area-inset-bottom)); border-top:1px solid var(--line); }
+  button{ flex:1; font:inherit; font-size:1.2rem; font-weight:650; padding:1.05em 1em; border-radius:15px;
+          border:1px solid #2c3038; background:var(--panel); color:var(--ink); }
+  button:active{ background:#20242a; transform:translateY(1px); }
+  button.next-btn{ flex:1.6; background:var(--accent); color:#04121d; border-color:var(--accent); }
+</style>
+</head>
+<body>
+  <header>
+    <span class="lamp" id="lamp"></span>
+    <span class="status" id="status">connecting…</span>
+    <span class="spacer"></span>
+    <span class="idx" id="idx"></span>
+  </header>
+
+  <main id="main">
+    <div class="waiting" id="waiting">Waiting for the laptop deck…<br><small id="chan"></small></div>
+    <div class="cur-notes" id="notes" style="display:none"></div>
+    <div class="next" id="nextwrap" style="display:none">
+      <div class="bar"><span class="badge" id="nbadge">slide</span><span class="nid" id="nid"></span><span class="lbl">next</span></div>
+      <div class="npreview" id="npreview"></div>
+    </div>
+  </main>
+
+  <footer>
+    <button id="prev">‹ Prev</button>
+    <button id="next" class="next-btn">Next ›</button>
+  </footer>
+
+<script>
+  const SUPABASE_URL = "https://rdbacwwbeyeqdkswwvjt.supabase.co";
+  const SUPABASE_ANON_KEY = "sb_publishable_IQNxMMynit0aWtOS3tjiRQ_h5sNo159";
+  const CLASS = new URLSearchParams(location.search).get('class') || 'classD';
+  const CHAN  = 'deck-' + CLASS;
+  const $ = id => document.getElementById(id);
+  $('chan').textContent = CHAN;
+
+  function setLive(on, label){ $('lamp').classList.toggle('on', !!on); $('status').textContent = label; }
+
+  function render(p){
+    $('waiting').style.display = 'none';
+    $('notes').style.display = 'block';
+    $('nextwrap').style.display = 'block';
+    $('notes').innerHTML = p.notes ? p.notes : '<span class="cur-empty">(no notes for this slide)</span>';
+    $('idx').textContent = (p.index && p.total) ? (p.index + ' / ' + p.total) : '';
+    // next card
+    const type = (p.nextType || 'slide');
+    const badge = $('nbadge'); badge.textContent = type; badge.className = 'badge ' + type;
+    $('nid').textContent = p.nextId || '—';
+    const prev = $('npreview');
+    if(p.nextId){ prev.innerHTML = p.nextNotes ? p.nextNotes : '<span class="none">(no notes)</span>'; }
+    else { prev.innerHTML = '<span class="none">End of deck</span>'; }
+    prev.classList.toggle('faded', !!p.nextNotes && prev.scrollHeight > prev.clientHeight);
+    $('main').scrollTop = 0;
+  }
+
+  let client, chan;
+  try{
+    client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { realtime:{ params:{ eventsPerSecond: 5 } } });
+    chan = client.channel(CHAN, { config:{ broadcast:{ self:false } } });
+    chan.on('broadcast', { event:'state' }, ({ payload }) => { setLive(true, 'live'); render(payload); });
+    chan.subscribe((status) => {
+      if(status === 'SUBSCRIBED'){ setLive(false, 'waiting for laptop…'); chan.send({ type:'broadcast', event:'request', payload:{} }); }
+      else if(status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED'){ setLive(false, 'reconnecting…'); }
+    });
+  }catch(e){ setLive(false, 'no connection'); }
+
+  function nav(action){ try{ chan && chan.send({ type:'broadcast', event:'nav', payload:{ action } }); }catch(e){} }
+  $('next').addEventListener('click', () => nav('next'));
+  $('prev').addEventListener('click', () => nav('prev'));
+  // Coming back to the tab: re-ask the laptop for the current state.
+  document.addEventListener('visibilitychange', () => { if(!document.hidden){ try{ chan && chan.send({ type:'broadcast', event:'request', payload:{} }); }catch(e){} } });
+</script>
+</body>
+</html>
