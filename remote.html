@@ -104,11 +104,16 @@
     const prev = $('npreview');
     if(p.nextId){ prev.innerHTML = p.nextNotes ? p.nextNotes : '<span class="none">(no notes)</span>'; }
     else { prev.innerHTML = '<span class="none">End of deck</span>'; }
-    if(window.MathJax && MathJax.typesetPromise){ MathJax.typesetPromise([$('notes'), $('npreview')])
-      .then(() => prev.classList.toggle('faded', prev.scrollHeight > prev.clientHeight)).catch(()=>{}); }
-    else { prev.classList.toggle('faded', prev.scrollHeight > prev.clientHeight); }
+    typesetNotes();
     $('main').scrollTop = 0;
   }
+  function fadeCheck(){ const prev = $('npreview'); prev.classList.toggle('faded', prev.scrollHeight > prev.clientHeight); }
+  function typesetNotes(){
+    if(window.MathJax && MathJax.typesetPromise){ MathJax.typesetPromise([$('notes'), $('npreview')]).then(fadeCheck).catch(fadeCheck); }
+    else { fadeCheck(); }   // MathJax not loaded yet — the startup hook below will typeset once it is
+  }
+  // If MathJax finishes loading AFTER the first notes already arrived, typeset whatever's on screen now.
+  if(window.MathJax && MathJax.startup && MathJax.startup.promise){ MathJax.startup.promise.then(typesetNotes).catch(()=>{}); }
 
   // Only re-render when the slide actually changed, so MathJax isn't re-typesetting on every 2s safety poll.
   let lastKey = null;
