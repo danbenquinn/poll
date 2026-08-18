@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Presenter Remote</title>
 <!--
-  Phone-side presenter remote for the MAE 1425 reveal decks. Opened on Daniel's phone; syncs with the
+  Phone-side presenter remote for the MAE 2501 reveal decks. Opened on Daniel's phone; syncs with the
   laptop deck over the SAME Supabase project the polls use, via a realtime BROADCAST channel (one socket).
   Shows the current slide's speaker notes + a "next" card, and its Prev/Next buttons drive the laptop.
   Purely additive: if this page (or wifi) dies, the laptop deck + its S speaker view are unaffected.
@@ -59,8 +59,19 @@
   .next .npreview .none{ color:var(--muted); font-style:italic; }
   footer{ display:flex; gap:.7em; padding:.75em; padding-bottom:calc(.75em + env(safe-area-inset-bottom)); border-top:1px solid var(--line); }
   button{ flex:1; font:inherit; font-size:1.2rem; font-weight:650; padding:1.05em 1em; border-radius:15px;
-          border:1px solid #2c3038; background:var(--panel); color:var(--ink); }
-  button:active{ background:#20242a; transform:translateY(1px); }
+          border:1px solid #2c3038; background:var(--panel); color:var(--ink);
+          /* touch-action:manipulation is the fix for "tap twice quickly and the phone zooms instead of
+             advancing": it tells the browser this element has no double-tap gesture, so the second tap
+             is delivered as a second tap rather than held back to see if a zoom is starting. That wait
+             is also where the old ~300 ms tap delay came from, so taps get snappier as a side effect.
+             Unlike maximum-scale=1 it disables zooming ONLY on these two buttons — pinch-zoom on the
+             notes still works, which matters when the notes are small and the room is dark. */
+          touch-action:manipulation;
+          -webkit-tap-highlight-color:transparent;   /* no grey flash on a fast double tap */
+          -webkit-user-select:none; user-select:none; }  /* a fast double tap must not select the label */
+  button:active, button.hit{ background:#20242a; transform:translateY(1px); }   /* .hit — pointerdown
+     handles the press now, and :active alone can lag behind a fast burst; this keeps the feedback
+     honest so you can see that four taps registered as four. */
   button.next-btn{ flex:1.6; background:var(--accent); color:#04121d; border-color:var(--accent); }
 </style>
 </head>
@@ -140,8 +151,23 @@
   setInterval(() => { if(!document.hidden){ try{ chan && chan.send({ type:'broadcast', event:'request', payload:{} }); }catch(e){} } }, 2000);
 
   function nav(action){ try{ chan && chan.send({ type:'broadcast', event:'nav', payload:{ action } }); }catch(e){} }
-  $('next').addEventListener('click', () => nav('next'));
-  $('prev').addEventListener('click', () => nav('prev'));
+  // Fire on pointerdown, not click. `click` on a touchscreen only resolves once the browser has ruled
+  // out a double-tap gesture, so a rapid burst of taps arrives late, out of order, or partly swallowed —
+  // exactly the "I tapped four times and advanced twice" failure. pointerdown fires immediately and once
+  // per finger-down. preventDefault stops the synthetic click that would otherwise follow and
+  // double-advance; the click listener stays as the keyboard/desktop path.
+  function bindNav(id, action){
+    const el = $(id);
+    el.addEventListener('pointerdown', e => {
+      if(e.pointerType === 'mouse' && e.button !== 0) return;
+      e.preventDefault();
+      el.classList.add('hit'); setTimeout(() => el.classList.remove('hit'), 90);
+      nav(action);
+    });
+    el.addEventListener('click', e => { if(e.detail === 0) nav(action); });   // keyboard Enter/Space only
+  }
+  bindNav('next', 'next');
+  bindNav('prev', 'prev');
   // Coming back to the tab: re-ask the laptop for the current state.
   document.addEventListener('visibilitychange', () => { if(!document.hidden){ try{ chan && chan.send({ type:'broadcast', event:'request', payload:{} }); }catch(e){} } });
 </script>
