@@ -57,6 +57,8 @@
   .next .npreview.faded::after{ content:""; position:absolute; left:0; right:0; bottom:0; height:2.4em;
                    background:linear-gradient(transparent, var(--panel)); }
   .next .npreview .none{ color:var(--muted); font-style:italic; }
+  .build{ margin-left:auto; color:var(--muted); font-size:.62rem; opacity:.65;
+          font-family:ui-monospace,monospace; letter-spacing:.04em; }
   footer{ display:flex; gap:.7em; padding:.75em; padding-bottom:calc(.75em + env(safe-area-inset-bottom)); border-top:1px solid var(--line); }
   button{ flex:1; font:inherit; font-size:1.2rem; font-weight:650; padding:1.05em 1em; border-radius:15px;
           border:1px solid #2c3038; background:var(--panel); color:var(--ink);
@@ -73,12 +75,25 @@
      handles the press now, and :active alone can lag behind a fast burst; this keeps the feedback
      honest so you can see that four taps registered as four. */
   button.next-btn{ flex:1.6; background:var(--accent); color:#04121d; border-color:var(--accent); }
+  /* Black: narrow, and unmistakable when it is ON. A blackout you cannot confirm from the phone is
+     worse than no blackout button, because the recovery (walk to the laptop) is the thing you were
+     trying to avoid. */
+  /* nowrap + a fixed share of the row: "Un-black" wrapped to two lines and shoved Prev/Next down,
+     so the footer changed shape every time the room went dark. A control you aim at by muscle memory
+     must not move. Hence also the short second label. */
+  button.black-btn{ flex:.9; white-space:nowrap; }
+  button.black-btn.on{ background:#f2f2ef; color:#04121d; border-color:#f2f2ef; font-weight:700; }
 </style>
 </head>
 <body>
   <header>
     <span class="lamp" id="lamp"></span>
     <span class="status" id="status">connecting…</span>
+    <!-- Build stamp. The phone loads the GitHub Pages copy, not the one in this folder, so "I changed
+         remote.html and nothing happened" is almost always "the change was never pushed" or "the phone
+         is on a cached page". Bump this string whenever this file changes, alongside remoteVersion in
+         engine/deck.js, and you can read which copy the phone actually has without guessing. -->
+    <span class="build" id="build">b5</span>
     <span class="spacer"></span>
     <span class="idx" id="idx"></span>
   </header>
@@ -97,6 +112,10 @@
 
   <footer>
     <button id="prev">‹ Prev</button>
+    <!-- Deliberately between Prev and Next and deliberately narrow: this is the button you press when
+         you want the room looking at YOU, and it is also the button you must never hit by accident
+         while advancing. Narrow + centred keeps it off both thumb paths. -->
+    <button id="black" class="black-btn">Black</button>
     <button id="next" class="next-btn">Next ›</button>
   </footer>
 
@@ -133,7 +152,19 @@
 
   // Only re-render when the slide actually changed, so MathJax isn't re-typesetting on every 2s safety poll.
   let lastKey = null;
-  function onState(p){ const key = (p.index||'') + '|' + (p.id||'') + '|' + (p.nextId||''); if(key === lastKey) return; lastKey = key; render(p); }
+  // `paused` is part of the key, not just the payload: without it the early-return below swallows a
+  // blackout that happened on the current slide — the one case the button exists for — and the phone
+  // would sit showing "Black" un-lit while the room is dark.
+  function onState(p){
+    setBlack(!!p.paused);
+    const key = (p.index||'') + '|' + (p.id||'') + '|' + (p.nextId||'') + '|' + (p.paused ? 1 : 0);
+    if(key === lastKey) return; lastKey = key; render(p);
+  }
+  function setBlack(on){
+    const b = $('black'); if(!b) return;
+    b.classList.toggle('on', on);
+    b.textContent = on ? 'Show' : 'Black';
+  }
 
   let client, chan;
   try{
@@ -168,6 +199,7 @@
   }
   bindNav('next', 'next');
   bindNav('prev', 'prev');
+  bindNav('black', 'blackout');
   // Coming back to the tab: re-ask the laptop for the current state.
   document.addEventListener('visibilitychange', () => { if(!document.hidden){ try{ chan && chan.send({ type:'broadcast', event:'request', payload:{} }); }catch(e){} } });
 </script>
