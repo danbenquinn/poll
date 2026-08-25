@@ -42,6 +42,11 @@
   .choice.wrong{ border-color:var(--bad); background:rgba(235,98,53,.16); }
   .choice.wrong .key{ background:var(--bad); color:var(--ink-on-color); }
   .status{ margin-top:8px; font-size:.95rem; color:var(--accent); min-height:1.4em; }
+  /* Blue is the default and stays the default — every "recorded", "closed", "sending" line is chrome.
+     The two VERDICT lines are the exception and match the button they are describing, so the answer
+     reads the same whether you look at your thumb or at the sentence under it. */
+  .status.right{ color:var(--ok); }
+  .status.wrong{ color:var(--bad); }
   .idbar{ margin-top:auto; padding-top:22px; color:var(--muted); font-size:.85rem; }
   .idbar a{ color:var(--accent); text-decoration:none; }
   .idscreen label{ display:block; margin:1.2em 0 .5em; color:var(--muted); }
@@ -106,7 +111,7 @@
 <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
-  console.log("vote.html build v8 — generated question bank; MathJax; green/red reveal via get_state.answer");
+  console.log("vote.html build v9 — reveal colours, vote_round clears wiped votes, server-side closed check");
   // ---- Supabase project (same values as in the deck) ----
   const SUPABASE_URL = "https://rdbacwwbeyeqdkswwvjt.supabase.co";
   const SUPABASE_ANON_KEY = "sb_publishable_IQNxMMynit0aWtOS3tjiRQ_h5sNo159";
@@ -242,8 +247,20 @@
   // Pushed from the deck via get_state. `answer` is the correct choice index and is null until the
   // deck SEALS the question — that is the whole reveal channel, and the reason the answer key is not
   // sitting in this file: the page is public, and POLLS below is the entire course.
-  let state = { poll: null, open: false, answer: null };
-  let shownKey = null;                        // what's currently rendered (poll|open|answer)
+  let state = { poll: null, open: false, answer: null, round: 0 };
+  let shownKey = null;                        // what's currently rendered (poll|open|answer|round)
+
+  // This phone's vote, stored as "<round>:<choice>" so it can be invalidated when the instructor wipes
+  // the question with "↻ Reset votes". A bare "2" is the pre-2026-08-25 format and reads as round 0,
+  // which is correct: it survives until the first wipe, then goes, which is exactly what should happen.
+  function myVote(pid){
+    const raw = localStorage.getItem("voted_" + pid);
+    if(raw === null) return null;
+    const [a, b] = raw.includes(":") ? raw.split(":") : ["0", raw];
+    return { round: Number(a), choice: Number(b) };
+  }
+  function rememberVote(pid, choice){ localStorage.setItem("voted_" + pid, state.round + ":" + choice); }
+  function forgetVote(pid){ localStorage.removeItem("voted_" + pid); }
 
   function show(el){ ["idscreen","pollscreen","waitscreen","msg"].forEach(i=>$(i).classList.add("hidden")); $(el).classList.remove("hidden"); }
   function message(t,b){ $("msgtitle").textContent=t; $("msgbody").textContent=b; show("msg"); }
@@ -280,8 +297,9 @@
       if(error) throw error;
       const row = (data && data[0]) || null;
       state = row ? { poll: row.current_poll, open: !!row.is_open,
-                      answer: (row.answer === null || row.answer === undefined) ? null : Number(row.answer) }
-                  : { poll: null, open: false, answer: null };
+                      answer: (row.answer === null || row.answer === undefined) ? null : Number(row.answer),
+                      round: Number(row.vote_round || 0) }   // absent on the older schema -> 0, behaves as before
+                  : { poll: null, open: false, answer: null, round: 0 };
     }catch(e){ console.warn(e); }
     reconcile();
   }
@@ -291,7 +309,10 @@
     if(!$("idscreen").classList.contains("hidden")) return;   // user is changing their ID — don't yank it away
     // `answer` is part of the key: the reveal arrives with the poll id unchanged and open already
     // false, so without it the seal would be a no-op and the phones would never light up.
-    const key = (state.poll || "-") + "|" + state.open + "|" + (state.answer === null ? "-" : state.answer);
+    // `round` is in the key too: resetting a question that was still OPEN changes nothing else about
+    // the state, so without it the wipe would not even trigger a re-render.
+    const key = (state.poll || "-") + "|" + state.open + "|" + (state.answer === null ? "-" : state.answer)
+              + "|" + state.round;
     if(key === shownKey) return;               // nothing changed
     shownKey = key;
     if(state.poll && POLLS[state.poll]) renderQuestion(state.poll, state.open, state.answer);
@@ -330,12 +351,23 @@
 
   function showWait(t,b){ $("waittitle").textContent=t; $("waitbody").textContent=b; show("waitscreen"); }
 
+  // Every status write goes through here so the verdict colour can never be left behind on the next
+  // line — the bug you get for free the moment two places set .textContent and only one clears a class.
+  function setStatus(text, kind){
+    const el = $("status");
+    el.className = "status" + (kind ? " " + kind : "");
+    el.textContent = text;
+  }
+
   function renderQuestion(pid, open, answer){
     show("pollscreen");
     const poll = POLLS[pid];
     $("qtitle").innerHTML = poll.q;
-    const prev = localStorage.getItem("voted_"+pid);
-    const mine = prev === null ? null : Number(prev);      // this phone's choice, from localStorage
+    // A vote cast in an earlier round was deleted server-side; forget it rather than keep showing a
+    // confident highlight on a choice the database no longer has.
+    const vote = myVote(pid);
+    if(vote && vote.round !== state.round) forgetVote(pid);
+    const mine = (vote && vote.round === state.round) ? vote.choice : null;
     const revealed = answer !== null && answer !== undefined;
     const box = $("choices"); box.innerHTML = "";
     poll.choices.forEach((txt,i) => {
@@ -348,31 +380,52 @@
       b.addEventListener("click", () => submit(pid, i));
       box.appendChild(b);
     });
-    // The status line stays BLUE in every one of these states, including the two verdicts: the colour
-    // that means right-or-wrong is on the button the student pressed, and a line of green text saying
-    // the same thing would only dilute it. A closed-but-not-yet-revealed question is the ordinary
-    // gap between Daniel sealing the vote and Daniel talking through it — say nothing more than that.
-    $("status").textContent =
+    // Blue for the chrome states; the two VERDICT lines take the colour of the button they describe
+    // (2026-08-25 — they were blue at first, on the theory that colouring both would dilute the button,
+    // and in the room it read as hedging: the sentence telling you you were wrong should not look like
+    // every other notice). A closed-but-not-yet-revealed question is the ordinary gap between sealing
+    // the vote and talking through it — say nothing more than that.
+    const verdict = !open && revealed && mine !== null ? (mine === answer ? "right" : "wrong") : "";
+    setStatus(
         open            ? (mine !== null ? "Recorded. Tap another to change it (until voting closes)." : "")
       : !revealed       ? "Voting closed for this question."
       : mine === null   ? "Voting closed. You didn't vote on this one."
       : mine === answer ? "Voting closed. Your answer was correct."
-                        : "Voting closed. Your answer was not the right one.";
+                        : "Voting closed. Your answer was not the right one.", verdict);
     typeset([$("qtitle"), box]);
   }
 
   async function submit(pid, i){
     if(!state.open || state.poll !== pid) return;
     [...document.querySelectorAll(".choice")].forEach((c,j)=>c.classList.toggle("sel", j===i));
-    $("status").textContent = "Sending…";
+    setStatus("Sending…", "");
     try{
       const { error } = await supa.rpc("cast_vote", { p_poll: pid, p_id: getId(), p_choice: i });
       if(error) throw error;
-      localStorage.setItem("voted_"+pid, i);
-      $("status").textContent = "Vote recorded ✓  You can change it until voting closes.";
+      rememberVote(pid, i);
+      setStatus("Vote recorded ✓  You can change it until voting closes.", "");
     }catch(e){
-      $("status").innerHTML = '<span class="err">Could not send — check your connection and tap again.</span>';
       console.warn(e);
+      // The server is the authority on whether voting is open, and this phone can be up to one polling
+      // tick behind it — so a tap a moment after the seal looks accepted here and is refused there.
+      // Take the selection back rather than leave a highlight on a vote that was not counted, and
+      // re-poll at once so the screen catches up to the reveal instead of waiting out the interval.
+      if(/voting closed/i.test(e.message || "")){
+        // Roll back to the last CONFIRMED vote rather than clearing: a student changing their mind a
+        // moment too late still has their earlier answer on the server, and blanking the phone would
+        // tell them they had not voted at all. Only a first-ever vote that was refused leaves nothing.
+        const kept = myVote(pid);
+        const keptChoice = (kept && kept.round === state.round) ? kept.choice : null;
+        [...document.querySelectorAll(".choice")].forEach((c, j) => c.classList.toggle("sel", j === keptChoice));
+        setStatus(keptChoice === null ? "Voting had already closed — that vote was not counted."
+                                      : "Voting had already closed — your earlier answer still stands.", "");
+        // Let them actually read that before the screen snaps to the revealed state. Without the delay
+        // the resync lands in the same breath and the tap looks like it simply did nothing.
+        setTimeout(() => { shownKey = null; poll(); }, 2200);
+      } else {
+        $("status").className = "status";
+        $("status").innerHTML = '<span class="err">Could not send — check your connection and tap again.</span>';
+      }
     }
   }
 
