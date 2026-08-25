@@ -56,11 +56,23 @@
                  background:var(--accent); color:var(--ink-on-color); font-weight:700; font-size:1.05rem; }
   .hint{ color:var(--muted); font-size:.85rem; margin-top:.7em; line-height:1.4; }
   .err{ color:var(--bad); }
+  /* The screen panels are plain block children of the flex `.wrap`, so `.waiting{margin:auto 0}` and
+     `.idbar{margin-top:auto}` had no flex parent to resolve against and quietly did nothing — the idle
+     text sat jammed at the top of the page with the id bar riding up underneath it. Making the visible
+     panel a full-height flex column is what those two auto margins were always written for.
+     `:not(.hidden)` rather than a bare `#waitscreen`: `.hidden{display:none}` is a single class and
+     would lose to an id, so setting `display` on the id itself would stop the panel ever hiding. */
+  #waitscreen:not(.hidden){ flex:1; display:flex; flex-direction:column; }
   .waiting{ margin:auto 0; text-align:center; color:var(--muted); }
-  .waiting .dot{ display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--accent);
-                 margin:0 3px; animation:pulse 1.2s infinite ease-in-out; }
-  .waiting .dot:nth-child(2){ animation-delay:.2s } .waiting .dot:nth-child(3){ animation-delay:.4s }
-  @keyframes pulse{ 0%,100%{opacity:.25} 50%{opacity:1} }
+  /* ONE slow breath, not three quick dots (2026-08-25). Three pulsing dots is the loading idiom — it
+     promises something imminent, and this screen is up for most of a lecture and again after the last
+     question, when nothing is coming at all. A single slow pulse says connected-and-idle instead, which
+     is the only thing the page actually knows. */
+  .waiting .breath{ display:block; width:11px; height:11px; border-radius:50%; margin:0 auto 22px;
+                    background:var(--accent); animation:breathe 3.6s ease-in-out infinite; }
+  @keyframes breathe{ 0%,100%{ opacity:.28; transform:scale(.86) } 50%{ opacity:1; transform:scale(1) } }
+  /* A dot that never stops moving, on a page that sits open for fifty minutes, is worth an opt-out. */
+  @media (prefers-reduced-motion: reduce){ .waiting .breath{ animation:none; opacity:.8; } }
   .hidden{ display:none; }
 </style>
 </head>
@@ -86,9 +98,9 @@
 
   <div id="waitscreen" class="hidden">
     <div class="waiting">
-      <h1 id="waittitle">Waiting for the next question</h1>
-      <p class="hint" id="waitbody">Keep this page open — it follows along with class.</p>
-      <div><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+      <span class="breath"></span>
+      <h1 id="waittitle">Nothing to answer right now</h1>
+      <p class="hint" id="waitbody">If another question comes up, it'll appear here.</p>
     </div>
     <div class="idbar">Voting as <b id="whoami2"></b> · <a href="#" id="changeid2">change</a></div>
   </div>
@@ -316,7 +328,10 @@
     if(key === shownKey) return;               // nothing changed
     shownKey = key;
     if(state.poll && POLLS[state.poll]) renderQuestion(state.poll, state.open, state.answer);
-    else showWait("Waiting for the next question", "Keep this page open — it follows along with class.");
+    // Nothing promised and nothing demanded: this screen is up between questions AND after the last
+    // one, and the page has no way to tell those apart — so it says only what is true in both, and does
+    // not tell a student to keep a page open when the class may well be over.
+    else showWait("Nothing to answer right now", "If another question comes up, it'll appear here.");
   }
 
   // MathJax is loaded `async`, so the FIRST question routinely renders before the library exists —
