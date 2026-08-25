@@ -279,20 +279,54 @@
   function getId(){ return (localStorage.getItem("uva_computing_id")||"").trim(); }
   function setWho(){ $("whoami").textContent=getId(); $("whoami2").textContent=getId(); }
 
+  // Is the student SITTING on the id screen right now, as opposed to the panel merely not having been
+  // swapped out yet? reconcile() has to know, and it used to ask the DOM — "is #idscreen visible?" —
+  // which is true in both cases and so refused to leave the id screen the moment anyone first arrived.
+  // Nobody caught it because a phone that has ever voted has the id in localStorage and skips this
+  // screen entirely; it only ever bit a first-time user, which on day one is the entire class.
+  let editingId = false;
+
   function start(){
     setWho();
-    if(!getId()){ show("idscreen"); $("cid").focus(); return; }
+    if(!getId()){ editingId = true; show("idscreen"); $("cid").focus(); return; }
     beginPolling();
   }
 
+  // ID GATE (rewritten 2026-08-25 after it turned out to be rejecting 25 of the 26 students enrolled).
+  //
+  // The old rule was /^[a-z]{2,4}[0-9]{0,4}[a-z]?$/ — at most ONE trailing letter. Real UVA computing
+  // ids overwhelmingly end in TWO (pkz2bn, auf6sh, vsj6ry), so almost nobody could get past the first
+  // screen. It survived testing because the one id it did accept was Daniel's own, dbq9d, which happens
+  // to have a single trailing letter; and the placeholder printed underneath the box, `abc1de`, was
+  // rejected by the very field it was an example for.
+  //
+  // The lesson is about what this field IS. It is not authentication — nothing here is secret, and the
+  // server only requires the id to be non-empty. It exists to dedup one vote per student and to match a
+  // roster when handing out prizes. So a false reject costs a student their whole class's participation,
+  // while a false accept costs a prize-draw entry. Those are not remotely the same size, and the check
+  // should be shaped accordingly: catch the obvious slip — blank, a phone number, a pasted sentence —
+  // and otherwise get out of the way rather than encode a guess about every id UVA has ever issued.
+  const ID_OK = /^[a-z][a-z0-9]{2,9}$/;
+  function normalizeId(raw){
+    // Lowercased, trimmed, and an email reduced to its local part: typing the whole address is the
+    // single likeliest thing a student does here, and it is a correct answer wearing a suffix.
+    return String(raw || "").trim().toLowerCase().replace(/^mailto:/, "").replace(/@.*$/, "");
+  }
   $("idgo").addEventListener("click", () => {
-    const v = $("cid").value.trim().toLowerCase();
-    if(!/^[a-z]{2,4}[0-9]{0,4}[a-z]?$/i.test(v) || v.length < 3){
-      $("iderr").textContent = "Please enter a valid UVA Computing ID (e.g. abc1de)."; return;
+    const v = normalizeId($("cid").value);
+    if(!ID_OK.test(v)){
+      $("iderr").textContent = "That doesn't look like a Computing ID. It's the part before " +
+                               "@virginia.edu — letters and numbers only, like abc1de.";
+      return;
     }
-    localStorage.setItem("uva_computing_id", v); setWho(); beginPolling();
+    localStorage.setItem("uva_computing_id", v);
+    editingId = false;                       // done here — let reconcile() move us on
+    $("iderr").textContent = "";
+    setWho(); beginPolling();
   });
-  function changeId(e){ e.preventDefault(); shownKey=null; show("idscreen"); $("cid").value=getId(); $("cid").focus(); }
+  function changeId(e){ e.preventDefault(); editingId = true; shownKey = null;
+                        $("iderr").textContent = ""; show("idscreen");
+                        $("cid").value = getId(); $("cid").focus(); }
   $("changeid").addEventListener("click", changeId);
   $("changeid2").addEventListener("click", changeId);
 
@@ -317,8 +351,8 @@
   }
 
   function reconcile(){
-    if(!getId()) return;                       // still on id screen
-    if(!$("idscreen").classList.contains("hidden")) return;   // user is changing their ID — don't yank it away
+    if(!getId()) return;                       // no id yet — start() is showing the id screen
+    if(editingId) return;                      // they are typing an id right now — don't yank it away
     // `answer` is part of the key: the reveal arrives with the poll id unchanged and open already
     // false, so without it the seal would be a no-op and the phones would never light up.
     // `round` is in the key too: resetting a question that was still OPEN changes nothing else about
