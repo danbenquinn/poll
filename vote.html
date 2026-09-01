@@ -148,15 +148,15 @@
       choices: ["$1.5\\,\\tau$", "$\\tfrac{1+\\sqrt5}{2}\\,\\tau$", "$2\\,\\tau$", "$\\sqrt2\\,\\tau$"]
     },
     "classC-q1": {
-      q: "Astronauts on the space shuttle feel about three times heavier during launch, i.e. they experience \"<b>3 g's</b>\". What is their upward acceleration?",
+      q: "Astronauts on the space shuttle feel about three times heavier during launch ($F_\\text{N}/mg\\approx 3$). What is their upward acceleration?",
       choices: ["$9.8$ m/s²", "$19.6$ m/s²", "$29.4$ m/s²", "$3$ m/s²"]
     },
     "classC-q2": {
       q: "An astronaut's mass is $80$ kg. While experiencing those <b>3 g's</b>, what is the normal force from the seat on their body?",
-      choices: ["$800$ N", "$1600$ N", "$2400$ N", "$3200$ N"]
+      choices: ["$\\approx800$ N", "$\\approx1600$ N", "$\\approx2400$ N", "$\\approx3200$ N"]
     },
     "classC-q3": {
-      q: "An elevator is broken and about to accelerate upward at 5 g's. Would it help to <b>jump</b> right before the elevator starts moving?",
+      q: "An elevator is broken and about to accelerate upward at 25 g's. Is it a <b>good idea</b> to jump right before the elevator starts moving?",
       choices: ["Yes", "No"]
     },
     "classD-q1": {
@@ -254,6 +254,30 @@
     "classN-q2": {
       q: "You are shaking $m_1$ and you want $m_2$ to hold as still as possible. Using $x_2/x_1 = k/(k - m_2\\omega_d^2)$, you should…",
       choices: ["shake much faster than $\\sqrt{k/m_2}$ — a soft spring and a heavy $m_2$ both help", "shake much slower than $\\sqrt{k/m_2}$ — slow shaking transmits less", "use a very stiff spring, so $m_2$ is held firmly in place", "shake at exactly $\\sqrt{k/m_2}$, where the formula has its special point"]
+    },
+    "classO-q1": {
+      q: "Two rods of the same steel. One is twice as thick as the other. A tap travels along the thick rod…",
+      choices: ["twice as fast", "at the same speed", "half as fast", "$\\sqrt2$ times as fast"]
+    },
+    "classO-q2": {
+      q: "The pulse arrives at the clamped end, squeezes hard against it, and for an instant nothing in the rod is moving. At that moment the rod's energy is…",
+      choices: ["all kinetic", "all stored in the springs", "split evenly between the two", "gone — absorbed by the wall"]
+    },
+    "classO-q3": {
+      q: "You swing a mass on a string in a circle over your head, and you let go of the string. <b>Immediately</b> after you let go, the mass…",
+      choices: ["keeps going around the circle", "flies off along the tangent", "flies straight out, away from the centre"]
+    },
+    "classP-q1": {
+      q: "A metal spoon and a wooden spoon have been lying in this room all morning. You pick up both. The metal one feels colder because…",
+      choices: ["it is colder", "it pulls heat out of your finger much faster", "it holds more heat per kilogram", "it is denser, so there is more of it touching you"]
+    },
+    "classP-q2": {
+      q: "You double the thickness of a mug's wall, same ceramic. The time before the outside starts to feel the coffee…",
+      choices: ["doubles", "quadruples", "is unchanged — the coffee is the same temperature", "halves"]
+    },
+    "classP-q3": {
+      q: "A hand rests for a few seconds on a sheet of gray paper, and on a sheet of bare aluminum. Both are lifted away and filmed on a thermal camera. The <b>crisper</b> handprint will be on…",
+      choices: ["the paper", "the aluminum", "neither — they will look the same"]
     }
   };
   // ==== /POLLS ====
@@ -440,12 +464,18 @@
     // Blue for the chrome states; the two VERDICT lines take the colour of the button they describe
     // (2026-08-25 — they were blue at first, on the theory that colouring both would dilute the button,
     // and in the room it read as hedging: the sentence telling you you were wrong should not look like
-    // every other notice). A closed-but-not-yet-revealed question is the ordinary gap between sealing
+    // every other notice). A closed-but-not-yet-revealed question USED to be only the momentary gap
+    // between sealing and the answer arriving, which is why this line said "Voting closed for this
+    // question." and stopped there. The deferred-reveal poll made that state a resting one — Class O
+    // locks the vote, plays two clips and reveals a minute and a half later — so the line now says what
+    // happens next. Nothing else here needed changing: buttons already disable on `!open` and colours
+    // already wait on a non-null `answer`, which is exactly the behaviour the feature wanted.
+    // A closed-but-not-yet-revealed question is the gap between sealing
     // the vote and talking through it — say nothing more than that.
     const verdict = !open && revealed && mine !== null ? (mine === answer ? "right" : "wrong") : "";
     setStatus(
         open            ? (mine !== null ? "Recorded. Tap another to change it (until voting closes)." : "")
-      : !revealed       ? "Voting closed for this question."
+      : !revealed       ? "Voting closed. The answer is coming up on the screen."
       : mine === null   ? "Voting closed. You didn't vote on this one."
       : mine === answer ? "Voting closed. Your answer was correct."
                         : "Voting closed. Your answer was not the right one.", verdict);
